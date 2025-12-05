@@ -1,0 +1,169 @@
+# core/views_mpesa.py
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from decimal import Decimal
+from django.utils import timezone
+from portalsdk import APIContext, APIMethodType, APIRequest
+from django.db import transaction
+from datetime import timedelta
+
+from core.models import Reserva, Bilhete, Rota
+
+
+# --------------------------------------------------------------------
+# CONFIGURAÇÕES
+# --------------------------------------------------------------------
+MPESA_API_KEY = "insvcs2ipeeye7k35w60z4zk6akic0r7"
+MPESA_PUBLIC_KEY = (
+    "MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAmptSWqV7cGUUJJhUBxsMLonux24u+FoTlrb+4Kgc6092JIszmI1QUoMohaDDXSVueXx6IXwYGsjjWY32HGXj1iQhkALXfObJ4DqXn5h6E8y5/xQYNAyd5bpN5Z8r892B6toGzZQVB7qtebH4apDjmvTi5FGZVjVYxalyyQkj4uQbbRQjgCkubSi45Xl4CGtLqZztsKssWz3mcKncgTnq3DHGYYEYiKq0xIj100LGbnvNz20Sgqmw/cH+Bua4GJsWYLEqf/h/yiMgiBbxFxsnwZl0im5vXDlwKPw+QnO2fscDhxZFAwV06bgG0oEoWm9FnjMsfvwm0rUNYFlZ+TOtCEhmhtFp+Tsx9jPCuOd5h2emGdSKD8A6jtwhNa7oQ8RtLEEqwAn44orENa1ibOkxMiiiFpmmJkwgZPOG/zMCjXIrrhDWTDUOZaPx/lEQoInJoE2i43VN/HTGCCw8dKQAwg0jsEXau5ixD0GUothqvuX3B9taoeoFAIvUPEq35YulprMM7ThdKodSHvhnwKG82dCsodRwY428kg2xM/UjiTENog4B6zzZfPhMxFlOSFX4MnrqkAS+8Jamhy1GgoHkEMrsT5+/ofjCx0HjKbT5NuA2V/lmzgJLl3jIERadLzuTYnKGWxVJcGLkWXlEPYLbiaKzbJb2sYxt+Kt5OxQqC1MCAwEAAQ=="
+)
+MPESA_SERVICE_PROVIDER_CODE = "171717"
+
+
+# --------------------------------------------------------------------
+# 1) CRIA RESERVA PENDENTE (sem push ainda)
+# --------------------------------------------------------------------
+@api_view(["POST"])
+def iniciar_pagamento(request):
+    try:
+        rota_id = request.data.get("rota_id")
+        paragem_id = request.data.get("paragem_id")
+        telefone = request.data.get("telefone")
+        quantidade = int(request.data.get("quantidade", 1))
+        tipo_transporte = request.data.get("tipo_transporte", "terrestre")
+
+        if not rota_id or not telefone:
+            return Response({"erro": "rota_id e telefone são obrigatórios."}, 400)
+
+        rota = Rota.objects.get(id=rota_id)
+        total = Decimal(rota.valor_passagem) * quantidade
+
+        reserva = Reserva.objects.create(
+            rota=rota,
+            paragem_embarque_id=paragem_id,
+            quantidade=quantidade,
+            telefone=telefone,
+            pago=False,
+            valor_total=total,
+            tipo_transporte=tipo_transporte,
+            data_reserva=timezone.now(),
+        )
+
+        return Response({
+            "status": "pending",
+            "reserva_id": reserva.id,
+            "valor_total": str(total),
+        })
+
+    except Exception as e:
+        return Response({"erro": str(e)}, 500)
+
+
+# --------------------------------------------------------------------
+# 2) ENVIA PUSH M-PESA (FUNCIONAL)
+# --------------------------------------------------------------------
+@api_view(["POST"])
+def mpesa_pagar(request):
+    print("DEBUG RECEBIDO:", request.data)
+
+    try:
+        reserva_id = request.data.get("reserva_id")
+        telefone = request.data.get("telefone")
+
+        reserva = Reserva.objects.get(id=reserva_id)
+        valor_int = str(int(reserva.valor_total))
+
+        # Referência curta (CONFORME REGRAS DO M-PESA)
+        referencia = f"R{reserva_id}"
+
+        ctx = APIContext()
+        ctx.api_key = MPESA_API_KEY
+        ctx.public_key = MPESA_PUBLIC_KEY
+        ctx.ssl = True
+        ctx.method_type = APIMethodType.POST
+        ctx.address = "api.sandbox.vm.co.mz"
+        ctx.port = 18352
+        ctx.path = "/ipg/v1x/c2bPayment/singleStage/"
+        ctx.add_header("Origin", "*")
+
+        ctx.add_parameter("input_TransactionReference", referencia)
+        ctx.add_parameter("input_ThirdPartyReference", referencia)
+        ctx.add_parameter("input_Amount", valor_int)
+        ctx.add_parameter("input_CustomerMSISDN", telefone)
+        ctx.add_parameter("input_ServiceProviderCode", "171717")
+
+        result = APIRequest(ctx).execute()
+
+        print("DEBUG RESULT:", result.body)
+        return Response(result.body, 200)
+
+    except Exception as e:
+        return Response({"erro": str(e)}, 500)
+
+
+# --------------------------------------------------------------------
+# 3) CALLBACK OFICIAL — confirma pagamento
+# --------------------------------------------------------------------
+@api_view(["POST"])
+def mpesa_callback(request):
+    print("========== CALLBACK RECEBIDO DO M-PESA ==========")
+    print(request.data)
+    print(request.body)
+    print("==================================================")
+
+    data = request.data
+    ref = data.get("input_ThirdPartyReference") or data.get("output_ThirdPartyReference")
+
+    if not ref:
+        return Response({"erro": "Referencia ausente"}, status=400)
+
+    if not ref.startswith("RES-"):
+        return Response({"erro": f"Referencia inválida: {ref}"}, status=400)
+
+    reserva_id = int(ref.replace("RES-", ""))
+
+    reserva = Reserva.objects.get(id=reserva_id)
+    reserva.pago = True
+    reserva.save()
+
+    for i in range(reserva.quantidade):
+        Bilhete.objects.create(
+            reserva=reserva,
+            nome_passageiro="Passageiro",
+            telefone_passageiro=reserva.telefone,
+            data_viagem=reserva.data_reserva
+        )
+
+    return Response({"status": "OK"})
+
+
+
+# --------------------------------------------------------------------
+# 4) STATUS (polling)
+# --------------------------------------------------------------------
+@api_view(["GET"])
+def mpesa_status(request):
+    reserva_id = request.query_params.get("reserva_id")
+
+    try:
+        reserva = Reserva.objects.get(id=reserva_id)
+
+        # limpa reserva após 10 min sem pagamento
+        if not reserva.pago:
+            if timezone.now() > reserva.data_reserva + timedelta(minutes=10):
+                reserva.delete()
+                return Response({"pago": False, "expirado": True})
+
+        bilhetes = [{
+            "codigo": b.codigo,
+            "nome": b.nome_passageiro
+        } for b in reserva.bilhetes.all()]
+
+        return Response({
+            "pago": reserva.pago,
+            "bilhetes": bilhetes
+        })
+
+    except Reserva.DoesNotExist:
+        return Response({"erro": "Reserva não encontrada"}, 404)

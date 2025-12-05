@@ -1,0 +1,124 @@
+from django.contrib import admin
+from .models import Usuario, Paragem, Veiculo, Rota, VeiculoRota, Reserva, Cidade, AgendaViagem, Encomenda, ConfiguracaoSistema, Bilhete
+
+from openpyxl import Workbook
+from django.http import HttpResponse
+from openpyxl.utils import get_column_letter
+
+def exportar_reservas_excel(modeladmin, request, queryset):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Reservas"
+
+    # Cabeçalhos atualizados
+    cabecalhos = [
+        "ID", "Nome", "Telefone", "Rota", "Número da Rota",
+        "Data da Viagem", "Paragem de Embarque", "Quantidade",
+        "Usado", "Valor do Bilhete (Base da Comissão)", "Código do Bilhete"
+    ]
+    ws.append(cabecalhos)
+
+    # Adiciona dados das reservas
+    for reserva in queryset:
+        ws.append([
+            reserva.id,
+            reserva.nome or "",
+            reserva.telefone or "",
+            reserva.rota.nome if reserva.rota else "",
+            reserva.rota.nr_rota if reserva.rota and hasattr(reserva.rota, "nr_rota") else "",
+            reserva.data_viagem.strftime("%d/%m/%Y") if reserva.data_viagem else "",
+            getattr(reserva, "nome_paragem", "") or getattr(reserva.paragem_embarque, "nome_paragem", ""),
+            reserva.quantidade or 0,
+            "Sim" if reserva.usado else "Não",
+            f"{reserva.rota.valor_passagem:.2f}" if reserva.rota and reserva.rota.valor_passagem else "0.00",
+            reserva.codigo_bilhete or "",
+        ])
+
+    # Ajustar automaticamente a largura das colunas
+    for coluna in ws.columns:
+        max_length = 0
+        coluna_letra = get_column_letter(coluna[0].column)
+        for cell in coluna:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        ws.column_dimensions[coluna_letra].width = max_length + 2
+
+    # Gerar resposta HTTP
+    response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response["Content-Disposition"] = 'attachment; filename="reservas.xlsx"'
+
+    wb.save(response)
+    return response
+
+exportar_reservas_excel.short_description = "📤 Exportar Reservas (Excel)"
+
+class BilheteInline(admin.TabularInline):
+    model = Bilhete
+    extra = 0
+    readonly_fields = ("codigo", "nome_passageiro", "telefone_passageiro", "usado", "embarcado")
+
+@admin.register(Usuario)
+class UsuarioAdmin(admin.ModelAdmin):
+    list_display = ("id", "nome", "telefone", "email", "tipo")
+    list_display_links = ("nome",)  # ← ISSO ativa o link de edição
+    search_fields = ("nome", "telefone", "email")
+
+@admin.register(Veiculo)
+class VeiculoAdmin(admin.ModelAdmin):
+    list_display = ("id", "tipo", "capacidade", "status")
+    list_display_links = ("tipo",)  # ← ISSO ativa o link de edição
+    list_filter = ("tipo",)
+
+@admin.register(VeiculoRota)
+class VeiculoRotaAdmin(admin.ModelAdmin):
+    list_display = ("id", "veiculo", "rota")
+    list_display_links = ("veiculo",)  # ← ISSO ativa o link de edição
+
+@admin.register(Cidade)
+class CidadeAdmin(admin.ModelAdmin):
+    list_display = ("id", "nome")
+    list_display_links = ("nome",)  # ← ISSO ativa o link de edição
+    search_fields = ("nome",)
+
+@admin.register(Rota)
+class RotaAdmin(admin.ModelAdmin):
+    list_display = ("id", "nome", "nr_rota", "cidade", "tipo_rota", "horario", "veiculo", "valor_passagem", "status", "motorista", "tipo_rota")
+    list_display_links = ("nome",)  # ← ISSO ativa o link de edição
+    list_filter = ("cidade", "tipo_rota", "status", "motorista")
+    ordering = ("cidade", "horario")
+    search_fields = ("nome", "nr_rota")
+
+@admin.register(Reserva)
+class ReservaAdmin(admin.ModelAdmin):
+    list_display = ("id", "nome", "telefone", "rota", "tipo_transporte", "quantidade", "data_viagem", "data_reserva", "embarcado")
+    list_display_links = ("nome",)
+    list_filter = ("rota", "rota__tipo_rota", "tipo_transporte", "paragem_embarque", "data_viagem", "usado")
+    search_fields = ("codigo_bilhete", "nome", "telefone", "rota__nome")
+    ordering = ("-data_viagem",)
+    actions = [exportar_reservas_excel]
+
+@admin.register(Paragem)
+class ParagemAdmin(admin.ModelAdmin):
+    list_display = ("id", "rota", "nome_paragem", "ordem")
+    list_display_links = ("rota",)  # ← ISSO ativa o link de edição
+    list_filter = ("rota",)
+    ordering = ("rota", "ordem")
+
+@admin.register(AgendaViagem)
+class AgendaViagemAdmin(admin.ModelAdmin):
+    list_display = ("rota", "data", "ativo")
+    list_filter = ("rota", "data", "ativo")
+    ordering = ("-data",)
+
+@admin.register(Encomenda)
+class EncomendaAdmin(admin.ModelAdmin):
+    list_display = ("ref_bagagem", "rota", "nome_receptor", "peso_kg", "embarcado", "data_envio")
+    list_filter = ("rota", "data_envio", "embarcado")
+    search_fields = ("ref_bagagem", "nome_remetente", "nome_receptor", "telefone_receptor")
+    
+@admin.register(ConfiguracaoSistema)
+class ConfiguracaoAdmin(admin.ModelAdmin):
+    list_display = ("comissao_reutilizacao",)    

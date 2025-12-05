@@ -1,0 +1,218 @@
+from rest_framework import serializers
+from django.db import models
+from .models import Proprietario, Veiculo, Rota, Reserva, Usuario, Paragem, VeiculoRota, Cidade, AgendaViagem, Encomenda, Bilhete
+
+class ProprietarioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Proprietario
+        fields = '__all__'
+
+class VeiculoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Veiculo
+        fields = '__all__'
+
+class RotaSerializer(serializers.ModelSerializer):
+    motorista_nome = serializers.CharField(source="motorista.nome", read_only=True)
+    class Meta:
+        model = Rota
+        fields = '__all__'  # <- Isso já inclui 'valor_passagem' se estiver no modelo       
+ 
+class PassageiroSerializer(serializers.Serializer):
+    nome = serializers.CharField()
+    telefone = serializers.CharField()  
+
+class BilheteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Bilhete
+        fields = ("id", "codigo", "nome_passageiro", "telefone_passageiro", "bagagem_kg", "usado", "embarcado", "data_viagem", "reserva",)
+
+    def update(self, instance, validated_data):
+        # Se o bilhete já tem bagagem gravada → bloquear
+        if instance.bagagem_kg is not None and "bagagem_kg" in validated_data:
+            raise serializers.ValidationError("O peso da bagagem já foi registrado e não pode ser alterado.")
+
+        return super().update(instance, validated_data)
+
+class ReservaSerializer(serializers.ModelSerializer):
+    rota_nome = serializers.SerializerMethodField()
+    paragem_embarque_nome = serializers.CharField(source="paragem_embarque.nome_paragem", read_only=True)
+    tipo_rota = serializers.CharField(source='rota.tipo_rota', read_only=True)
+    rota_horario = serializers.TimeField(source='rota.horario', read_only=True)
+
+    passageiros = serializers.ListField(
+        child=serializers.DictField(child=serializers.CharField()),
+        required=False,
+        write_only=True
+    )
+
+    bilhetes = BilheteSerializer(many=True, read_only=True)
+    codigos_bilhetes = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = Reserva
+        fields = '__all__'
+        extra_kwargs = {
+            "nome": {"required": False, "allow_blank": True, "allow_null": True},
+            "telefone": {"required": False, "allow_blank": True, "allow_null": True},
+            "nome_passageiro": {"required": False, "allow_blank": True, "allow_null": True},
+            "telefone_passageiro": {"required": False, "allow_blank": True, "allow_null": True},
+        }
+
+    def get_rota_nome(self, obj):
+        return obj.rota.nome if obj.rota else None
+
+    codigos_bilhetes = serializers.SerializerMethodField()
+
+    def get_codigos_bilhetes(self, obj):
+        try:
+            return [b.codigo for b in obj.bilhetes.all()]
+        except:
+            return []
+
+    def validate(self, data):
+        rota = data['rota']
+        qtd = data.get("quantidade", 1)
+
+        # Se for interprovincial → quantidade = número de passageiros enviados
+        passageiros = self.initial_data.get("passageiros")
+        if isinstance(passageiros, list) and len(passageiros) > 0:
+            qtd = len(passageiros)
+
+        reservas_existentes = Reserva.objects.filter(rota=rota).aggregate(
+            total=models.Sum('quantidade')
+        )['total'] or 0
+
+        capacidade = rota.veiculo.capacidade if rota.veiculo else 0
+
+        if capacidade and (reservas_existentes + qtd) > capacidade:
+            raise serializers.ValidationError(
+                f"Não há lugares suficientes! Disponíveis: {capacidade - reservas_existentes}."
+            )
+
+        return data
+
+    def create(self, validated_data):
+        passageiros = self.initial_data.get("passageiros", [])
+        if "passageiros" in validated_data:
+            validated_data.pop("passageiros", None)
+
+        rota = validated_data["rota"]
+        tipo_rota = rota.tipo_rota
+
+        from .models import Bilhete
+
+        # ✅ INTERPROVINCIAL (múltiplos bilhetes)
+        # Se interprovincial → cria vários bilhetes (1 por passageiro)
+        if tipo_rota == "interprovincial":
+
+            if not isinstance(passageiros, list) or len(passageiros) == 0:
+                raise serializers.ValidationError("Para rotas interprovinciais, forneça a lista 'passageiros'.")
+
+            passageiros_norm = []
+            for p in passageiros:
+                nome_p = (p.get("nome") or "").strip()
+                tel_p = (p.get("telefone") or "").strip()
+                if not nome_p or not tel_p:
+                    raise serializers.ValidationError("Cada passageiro deve ter nome e telefone.")
+                passageiros_norm.append({"nome": nome_p, "telefone": tel_p})
+
+            # quantidade = número de passageiros listados
+            validated_data["quantidade"] = len(passageiros_norm)
+
+            # Define nome/telefone do comprador se não informados
+            if not validated_data.get("nome"):
+                validated_data["nome"] = passageiros_norm[0]["nome"]
+            if not validated_data.get("telefone"):
+                validated_data["telefone"] = passageiros_norm[0]["telefone"]
+
+            # Criar reserva
+            reserva = Reserva.objects.create(**validated_data)
+
+            # Criar bilhetes (1 por passageiro)
+            from .models import Bilhete
+            for p in passageiros_norm:
+                Bilhete.objects.create(
+                    reserva=reserva,
+                    nome_passageiro=p["nome"],
+                    telefone_passageiro=p["telefone"]
+                )
+
+            return reserva   # ✅ ESSA LINHA É O QUE ESTAVA FALTANDO
+
+
+        # Caso URBANO → pode comprar 1 ou mais bilhetes
+        else:
+            passageiros_norm = []
+            if isinstance(passageiros, list) and len(passageiros) > 0:
+                # Se vier lista de passageiros → usar ela
+                for p in passageiros:
+                    nome_p = (p.get("nome") or "").strip()
+                    tel_p = (p.get("telefone") or "").strip()
+                    if not nome_p or not tel_p:
+                        raise serializers.ValidationError("Cada passageiro deve ter nome e telefone.")
+                    passageiros_norm.append({"nome": nome_p, "telefone": tel_p})
+                validated_data["quantidade"] = len(passageiros_norm)
+            else:
+                # Compra simples → repetir o mesmo comprador "quantidade" vezes
+                nome_base = validated_data.get("nome")
+                telefone_base = validated_data.get("telefone")
+                if not nome_base or not telefone_base:
+                    raise serializers.ValidationError("Nome e telefone são obrigatórios para compra de bilhete urbano.")
+
+                quantidade = validated_data.get("quantidade", 1)
+                passageiros_norm = [
+                    {"nome": nome_base, "telefone": telefone_base}
+                    for _ in range(quantidade)
+                ]
+
+            # Criar reserva
+            reserva = Reserva.objects.create(**validated_data)
+
+            # Criar um bilhete por passageiro
+            from .models import Bilhete
+            for p in passageiros_norm:
+                Bilhete.objects.create(
+                    reserva=reserva,
+                    nome_passageiro=p["nome"],
+                    telefone_passageiro=p["telefone"]
+                )
+
+            # Mantém compatibilidade com telas antigas (exibe o primeiro bilhete)
+            reserva.codigo_bilhete = reserva.bilhetes.first().codigo
+            reserva.save(update_fields=["codigo_bilhete"])
+            return reserva
+
+
+
+class UsuarioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Usuario
+        fields = '__all__'
+
+class ParagemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Paragem
+        fields = ['id', 'rota', 'nome_paragem', 'ordem']
+
+class VeiculoRotaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VeiculoRota
+        fields = '__all__'
+        
+class CidadeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Cidade
+        fields = '__all__'  
+
+class AgendaViagemSerializer(serializers.ModelSerializer):
+    rota_nome = serializers.CharField(source='rota.nome', read_only=True)
+
+    class Meta:
+        model = AgendaViagem
+        fields = ['id', 'rota', 'rota_nome', 'data', 'ativo']
+ 
+class EncomendaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Encomenda
+        fields = '__all__'
