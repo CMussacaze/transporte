@@ -1,0 +1,86 @@
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+
+const VerificarBilhete = () => {
+    const [codigo, setCodigo] = useState("");
+    const [mensagem, setMensagem] = useState("");
+    const [reservas, setReservas] = useState([]);
+
+    // Carregar todas reservas ainda não usadas
+    const buscarReservas = () => {
+        axios.get("http://127.0.0.1:8000/api/reservas/")
+            .then(response => {
+                const reservasAtivas = response.data.filter(r => !r.usado);
+                setReservas(reservasAtivas);
+            })
+            .catch(error => console.error("Erro ao buscar reservas:", error));
+    };
+
+    useEffect(() => {
+        buscarReservas();
+        const intervalo = setInterval(buscarReservas, 15000); // Atualiza a cada 15s
+        return () => clearInterval(intervalo);
+    }, []);
+
+    const verificarBilhete = () => {
+        if (!codigo) return;
+
+        axios.post("http://127.0.0.1:8000/api/conferir-bilhete/", { codigo_bilhete: codigo })
+            .then(res => {
+                if (res.data.valido) {
+                    setMensagem(`✅ Bilhete VÁLIDO para rota ${res.data.rota}`);
+                } else {
+                    setMensagem(`❌ Bilhete JÁ USADO`);
+                }
+                setCodigo("");
+                buscarReservas();
+            })
+            .catch(() => {
+                setMensagem("❌ Bilhete INEXISTENTE");
+                setCodigo("");
+            });
+    };
+
+    return (
+        <div>
+            <h2>Conferência de Bilhetes</h2>
+
+            <label>Código do Bilhete:</label>
+            <input
+                type="text"
+                value={codigo}
+                onChange={(e) => setCodigo(e.target.value.toUpperCase())}
+                onKeyDown={(e) => e.key === "Enter" && verificarBilhete()}
+                placeholder="Ex: FABA-123456"
+                autoFocus
+            />
+            <button onClick={verificarBilhete}>Verificar</button>
+
+            {mensagem && <p><strong>{mensagem}</strong></p>}
+
+			<h3>Reservas Não Verificadas</h3>
+			<table border="1">
+				<thead>
+					<tr>
+						<th>Bilhete</th>
+						<th>Rota</th>
+						<th>Paragem</th>
+						<th>Quantidade</th>
+					</tr>
+				</thead>
+				<tbody>
+					{reservas.map(reserva => (
+						<tr key={reserva.id}>
+							<td>{reserva.codigo_bilhete}</td>
+							<td>{reserva.rota_nome}</td>
+							<td>{reserva.paragem_embarque_nome || "N/A"}</td>
+							<td>{reserva.quantidade}</td>
+						</tr>
+					))}
+				</tbody>
+			</table>
+        </div>
+    );
+};
+
+export default VerificarBilhete;

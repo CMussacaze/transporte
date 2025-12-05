@@ -1,0 +1,170 @@
+import React, { useState } from "react";
+import axios from "axios";
+
+const EncomendasForm = ({ rotaId }) => {
+    const [encomendas, setEncomendas] = useState([
+        {
+            nome_remetente: "",
+            telefone_remetente: "",
+            nome_receptor: "",
+            telefone_receptor: "",
+            quantidade: 1,
+            peso_kg: "",
+            ref_bagagem: "",
+            embarcado: false,
+        },
+    ]);
+
+    const gerarReferencia = (nome = "REF") => {
+        const prefixo = nome?.split(" ")[0]?.substring(0, 3)?.toUpperCase() || "REF";
+        const numero = Math.floor(1000 + Math.random() * 9000);
+        return `${prefixo}-${numero}`;
+    };
+
+    const adicionarLinha = () => {
+        setEncomendas([
+            ...encomendas,
+            {
+                nome_remetente: "",
+                telefone_remetente: "",
+                nome_receptor: "",
+                telefone_receptor: "",
+                quantidade: 1,
+                peso_kg: "",
+                ref_bagagem: "",
+                embarcado: false,
+            },
+        ]);
+    };
+
+    const atualizarCampo = (index, campo, valor) => {
+        const atualizadas = [...encomendas];
+        atualizadas[index][campo] = valor;
+
+        if (campo === "peso_kg" && !atualizadas[index].ref_bagagem) {
+            atualizadas[index].ref_bagagem = gerarReferencia(atualizadas[index].nome_remetente);
+        }
+
+        setEncomendas(atualizadas);
+    };
+
+    const salvarEncomendas = () => {
+        const validas = encomendas.filter(
+            (e) => e.nome_remetente && e.nome_receptor && e.peso_kg
+        );
+
+        if (validas.length === 0) {
+            alert("Preencha pelo menos uma encomenda com os dados obrigatórios.");
+            return;
+        }
+
+        Promise.all(
+            validas.map((e) => {
+                const dados = { ...e, rota: rotaId };
+                console.log("Dados a enviar:", dados);
+                return axios.post("http://127.0.0.1:8000/api/encomendas/", dados);
+            })
+        )
+            .then(() => {
+                alert("Encomendas salvas com sucesso!");
+                setEncomendas([
+                    {
+                        nome_remetente: "",
+                        telefone_remetente: "",
+                        nome_receptor: "",
+                        telefone_receptor: "",
+                        quantidade: 1,
+                        peso_kg: "",
+                        ref_bagagem: "",
+                        embarcado: false,
+                    },
+                ]);
+            })
+            .catch((err) => {
+                console.error("Erro ao salvar encomendas:", err);
+                if (err.response?.data) {
+                    const erros = err.response.data;
+                    const mensagens = Object.entries(erros)
+                        .map(([campo, msgs]) => `${campo}: ${msgs.join(", ")}`)
+                        .join("\n");
+                    alert("Erro ao salvar encomendas. Verifique os campos e tente novamente:\n" + mensagens);
+                } else {
+                    alert("Erro ao salvar encomendas. Verifique a conexão.");
+                }
+            });
+    };
+
+    return (
+        <div>
+            <h3>📦 Encomendas Não Acompanhadas</h3>
+            {encomendas.map((enc, index) => (
+                <div key={index} style={{ border: "1px solid #ccc", padding: 10, marginBottom: 10 }}>
+                    <label>Remetente:</label>
+                    <input
+                        type="text"
+                        placeholder="Nome"
+                        value={enc.nome_remetente}
+                        onChange={(e) => {
+                            const nome = e.target.value;
+                            atualizarCampo(index, "nome_remetente", nome);
+                            if (!enc.ref_bagagem) {
+                                atualizarCampo(index, "ref_bagagem", gerarReferencia(nome));
+                            }
+                        }}
+                    />
+                    <input
+                        type="text"
+                        placeholder="Telefone"
+                        value={enc.telefone_remetente}
+                        onChange={(e) => atualizarCampo(index, "telefone_remetente", e.target.value)}
+                    />
+
+                    <label>Receptor:</label>
+                    <input
+                        type="text"
+                        placeholder="Nome"
+                        value={enc.nome_receptor}
+                        onChange={(e) => atualizarCampo(index, "nome_receptor", e.target.value)}
+                    />
+                    <input
+                        type="text"
+                        placeholder="Telefone"
+                        value={enc.telefone_receptor}
+                        onChange={(e) => atualizarCampo(index, "telefone_receptor", e.target.value)}
+                    />
+
+                    <label>Qtd:</label>
+                    <input
+                        type="number"
+                        min="1"
+                        value={enc.quantidade}
+                        onChange={(e) => atualizarCampo(index, "quantidade", parseInt(e.target.value))}
+                    />
+
+                    <label>Peso (Kg):</label>
+                    <input
+                        type="number"
+                        value={enc.peso_kg}
+                        onChange={(e) => atualizarCampo(index, "peso_kg", e.target.value)}
+                    />
+
+                    <label>Referência:</label>
+                    <input type="text" value={enc.ref_bagagem} readOnly />
+
+                    <label>
+                        <input
+                            type="checkbox"
+                            checked={enc.embarcado}
+                            onChange={(e) => atualizarCampo(index, "embarcado", e.target.checked)}
+                        />
+                        Embarcado
+                    </label>
+                </div>
+            ))}
+            <button onClick={adicionarLinha}>+ Adicionar Encomenda</button>
+            <button onClick={salvarEncomendas}>💾 Salvar Encomendas</button>
+        </div>
+    );
+};
+
+export default EncomendasForm;

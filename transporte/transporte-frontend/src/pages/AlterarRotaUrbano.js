@@ -1,0 +1,90 @@
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+
+const AlterarRotaUrbano = () => {
+    const [codigo, setCodigo] = useState("");
+    const [reserva, setReserva] = useState(null);
+    const [rotas, setRotas] = useState([]);
+    const [novaRotaId, setNovaRotaId] = useState("");
+
+    const buscarReserva = () => {
+        if (!codigo.trim()) return alert("Insira o código do bilhete.");
+
+        axios.get(`http://127.0.0.1:8000/api/reservas/?codigo_bilhete=${codigo}`)
+            .then(res => {
+                const encontrada = res.data.find(r => r.tipo_rota === "urbana" && !r.usado);
+                if (encontrada) {
+                    setReserva(encontrada);
+                } else {
+                    alert("Bilhete inválido, já usado ou não é urbano.");
+                }
+            })
+            .catch(() => alert("Erro ao buscar bilhete."));
+    };
+
+const alterar = () => {
+    if (!reserva || !novaRotaId) return alert("Dados incompletos.");
+
+    axios.post("http://127.0.0.1:8000/api/alterar-rota/", {
+        codigo_bilhete: codigo,
+        nova_rota: novaRotaId
+    })
+    .then(() => {
+        alert("Rota alterada com sucesso!");
+        setReserva(null);
+        setCodigo("");
+        setNovaRotaId("");
+    })
+    .catch(err => {
+        if (err.response?.data?.erro) {
+            alert("Erro: " + err.response.data.erro);  // ← Mostra o erro do servidor
+        } else {
+            alert("Erro ao alterar rota.");
+        }
+        console.error(err);
+    });
+};
+
+
+    useEffect(() => {
+        axios.get("http://127.0.0.1:8000/api/rotas/?tipo_rota=urbana")
+            .then(res => setRotas(res.data))
+            .catch(() => alert("Erro ao carregar rotas."));
+    }, []);
+
+    return (
+        <div>
+            <h3>Alterar Rota (Urbano)</h3>
+
+            <input
+                type="text"
+                placeholder="Digite o código do bilhete"
+                value={codigo}
+                onChange={(e) => setCodigo(e.target.value)}
+            />
+            <button onClick={buscarReserva}>Buscar</button>
+
+            {reserva && (
+                <div style={{ marginTop: "20px" }}>
+                    <p><strong>Bilhete:</strong> {reserva.codigo_bilhete}</p>
+                    <p><strong>Rota Atual:</strong> {reserva.rota_nome}</p>
+
+                    <label>Nova Rota:</label>
+                    <select value={novaRotaId} onChange={(e) => setNovaRotaId(e.target.value)}>
+                        <option value="">-- Selecione uma nova rota urbana --</option>
+                        {rotas.map(r => (
+                            <option key={r.id} value={r.id}>
+                                {r.nome} - {r.horario}
+                            </option>
+                        ))}
+                    </select>
+
+                    <br /><br />
+                    <button onClick={alterar}>Confirmar Alteração</button>
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default AlterarRotaUrbano;

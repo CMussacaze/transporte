@@ -1,0 +1,550 @@
+from django.shortcuts import render
+from django.db import models
+
+# Create your views here.
+from rest_framework.decorators import api_view
+from rest_framework import viewsets, filters
+from rest_framework.response import Response
+from django.contrib.auth.hashers import check_password
+from rest_framework import status
+from rest_framework.decorators import action
+from django.db import transaction
+import random, string
+from .models import Proprietario, Veiculo, Rota, Reserva, Usuario, Paragem, VeiculoRota, Cidade, Encomenda, ConfiguracaoSistema, AgendaViagem, Usuario, Bilhete, Paragem
+from .serializers import ProprietarioSerializer, VeiculoSerializer, RotaSerializer, ReservaSerializer, UsuarioSerializer, ParagemSerializer, VeiculoRotaSerializer, CidadeSerializer, AgendaViagemSerializer, EncomendaSerializer, BilheteSerializer
+from django.db.models import Sum
+import random
+from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime, timedelta, date
+from datetime import date
+from django.utils import timezone
+
+class ProprietarioViewSet(viewsets.ModelViewSet):
+    queryset = Proprietario.objects.all()
+    serializer_class = ProprietarioSerializer
+
+class VeiculoViewSet(viewsets.ModelViewSet):
+    queryset = Veiculo.objects.all()
+    serializer_class = VeiculoSerializer
+
+class RotaViewSet(viewsets.ModelViewSet):
+    queryset = Rota.objects.filter(status=True)
+    serializer_class = RotaSerializer
+    filterset_fields = ['cidade']  # ← habilita filtro por ?cidade=ID
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        origem = self.request.query_params.get("origem")
+        tipo = self.request.query_params.get("tipo_transporte")
+        tipo_rota = self.request.query_params.get("tipo_rota")
+        motorista_id = self.request.query_params.get("motorista")
+
+        if origem:
+            queryset = queryset.filter(cidade_id=origem)
+
+        if tipo:
+            queryset = queryset.filter(tipo_transporte=tipo)
+
+        if tipo_rota:
+            queryset = queryset.filter(tipo_rota=tipo_rota)
+        
+        if motorista_id:
+            queryset = queryset.filter(motorista__id=motorista_id)
+
+        return queryset
+
+class ReservaViewSet(viewsets.ModelViewSet):
+    queryset = Reserva.objects.all().prefetch_related("bilhetes")
+    serializer_class = ReservaSerializer
+
+    def create(self, request, *args, **kwargs):
+        try:
+            rota_id = request.data.get("rota")
+            nome = request.data.get("nome", "")
+            telefone = request.data.get("telefone")
+            quantidade = int(request.data.get("quantidade", 1))
+            paragem_id = request.data.get("paragem_embarque")
+
+            if not rota_id or not telefone:
+                return Response({"erro": "Rota e telefone são obrigatórios."}, status=400)
+
+            rota = Rota.objects.get(id=rota_id)
+
+            total = Decimal(rota.valor_passagem) * quantidade
+
+            reserva = Reserva.objects.create(
+                rota=rota,
+                nome=nome,
+                telefone=telefone,
+                quantidade=quantidade,
+                paragem_embarque_id=paragem_id,
+                valor_total=total,
+                pago=False,
+                data_reserva=timezone.now().date()
+            )
+
+            # Criar códigos de bilhetes locais (modo offline se não usar Mpesa)
+            codigos = []
+            for i in range(quantidade):
+                b = reserva.bilhetes.create(
+                    nome_passageiro=nome or "Passageiro",
+                    telefone_passageiro=telefone,
+                    data_viagem=reserva.data_reserva
+                )
+                codigos.append(b.codigo)
+
+            return Response({
+                "id": reserva.id,
+                "codigos_bilhetes": codigos,
+                "paragem_embarque_nome": reserva.paragem_embarque.nome_paragem if reserva.paragem_embarque else "",
+            }, status=201)
+
+        except Rota.DoesNotExist:
+            return Response({"erro": "Rota não encontrada."}, status=404)
+        except Exception as e:
+            return Response({"erro": str(e)}, status=500)
+
+    
+class UsuarioViewSet(viewsets.ModelViewSet):
+    queryset = Usuario.objects.all()
+    serializer_class = UsuarioSerializer
+
+# ViewSet para Paragens
+class ParagemViewSet(viewsets.ModelViewSet):
+    queryset = Paragem.objects.all().order_by('ordem')
+    serializer_class = ParagemSerializer
+
+    def get_queryset(self):
+        queryset = Paragem.objects.all()
+        rota_id = self.request.query_params.get('rota')
+        if rota_id:
+            queryset = queryset.filter(rota__id=rota_id).order_by('ordem')
+        return queryset
+
+
+# ViewSet para Associação Veículos-Rotas
+class VeiculoRotaViewSet(viewsets.ModelViewSet):
+    queryset = VeiculoRota.objects.all()
+    serializer_class = VeiculoRotaSerializer
+    
+class CidadeViewSet(viewsets.ModelViewSet):
+    queryset = Cidade.objects.all()
+    serializer_class = CidadeSerializer    
+
+@api_view(["POST"])
+def conferir_bilhete(request):
+    codigo = request.data.get("codigo_bilhete")
+    motorista_id = request.data.get("motorista_id")
+
+    if not codigo:
+        return Response({"erro": "Código do bilhete é obrigatório."}, status=400)
+
+    try:
+        bilhete = Bilhete.objects.select_related("reserva__rota").get(codigo=codigo)
+        reserva = bilhete.reserva
+        rota = reserva.rota
+        tipo = rota.tipo_rota  # "urbana" ou "interprovincial"
+
+        # ----------------------------
+        # 🔶 1) Bloqueio: Bilhete já usado
+        # ----------------------------
+        if bilhete.usado:
+            return Response({"valido": False, "status": "já usado"}, status=200)
+
+        # ----------------------------
+        # 🔶 2) Bloqueio: Motorista errado
+        # ----------------------------
+        if motorista_id and rota.motorista_id != int(motorista_id):
+            return Response({"valido": False, "status": "rota_errada"}, status=200)
+
+        # ----------------------------
+        # 🔵 URBANO — regras específicas
+        # ----------------------------
+        if tipo == "urbana":
+            data_hoje = date.today().strftime("%Y-%m-%d")
+
+            # Se o bilhete tiver data_viagem (apenas após reutilização)
+            if bilhete.data_viagem:
+                if str(bilhete.data_viagem) != data_hoje:
+                    return Response({
+                        "valido": False,
+                        "status": "data_invalida",
+                        "mensagem": f"Bilhete de {bilhete.data_viagem} não é válido para hoje ({data_hoje}).",
+                        "data_viagem": str(bilhete.data_viagem)
+                    }, status=400)
+
+            # Se o bilhete NÃO tem data_viagem (bilhete antigo), usa-se a da reserva
+            else:
+                if str(reserva.data_viagem) != data_hoje:
+                    return Response({
+                        "valido": False,
+                        "status": "data_invalida",
+                        "mensagem": f"Bilhete de {reserva.data_viagem} não é válido para hoje ({data_hoje}).",
+                        "data_viagem": str(reserva.data_viagem)
+                    }, status=400)
+
+        # ----------------------------
+        # 🔵 INTERPROVINCIAL — regras específicas
+        # ----------------------------
+        if tipo == "interprovincial":
+            # Aqui a data usada é sempre reserva.data_viagem
+            if not reserva.data_viagem:
+                return Response({
+                    "valido": False,
+                    "status": "sem_data",
+                    "erro": "Bilhete não tem data de viagem atribuída."
+                }, status=400)
+
+            hoje = date.today().strftime("%Y-%m-%d")
+            # Interprovincial só não pode usar bilhetes PASSADOS
+            if str(reserva.data_viagem) < hoje:
+                return Response({
+                    "valido": False,
+                    "status": "data_passada",
+                    "erro": f"Bilhete expirado ({reserva.data_viagem})."
+                }, status=400)
+
+        # ----------------------------
+        # 🔶 3) MARCAR COMO USADO
+        # ----------------------------
+        bilhete.usado = True
+        bilhete.save()
+
+        # ----------------------------
+        # 🔶 4) RESPOSTA FINAL
+        # ----------------------------
+        return Response({
+            "valido": True,
+            "rota_id": rota.id,
+            "rota_nome": rota.nome,
+            "tipo": tipo,
+            "data_viagem": str(bilhete.data_viagem or reserva.data_viagem)
+        })
+
+    except Bilhete.DoesNotExist:
+        return Response({"valido": False, "status": "inexistente"}, status=404)
+
+       
+@api_view(['GET']) 
+def reservas_motorista(request, motorista_id):
+    try:
+        rotas_do_motorista = Rota.objects.filter(motorista__id=motorista_id, tipo_rota="urbana")  # ← adiciona filtro
+        reservas = Reserva.objects.filter(rota__in=rotas_do_motorista, usado=False)
+        serializer = ReservaSerializer(reservas, many=True)
+        return Response(serializer.data)
+    except Exception as e:
+        return Response({"erro": str(e)}, status=400)    
+
+class AgendaViagemViewSet(viewsets.ModelViewSet):
+    queryset = AgendaViagem.objects.filter(ativo=True).order_by("data")
+    serializer_class = AgendaViagemSerializer
+
+    def get_queryset(self):
+        rota_id = self.request.query_params.get("rota")
+        qs = super().get_queryset()
+        if rota_id:
+            qs = qs.filter(rota_id=rota_id)
+        return qs
+
+class EncomendaViewSet(viewsets.ModelViewSet):
+    queryset = Encomenda.objects.all()
+    serializer_class = EncomendaSerializer  
+    
+class BilheteViewSet(viewsets.ModelViewSet):
+    queryset = Bilhete.objects.all()
+    serializer_class = BilheteSerializer    
+
+@api_view(['POST'])
+def reutilizar_bilhete_urbano(request):
+    codigo = request.data.get("codigo_bilhete")
+    nova_rota_id = request.data.get("nova_rota")
+    nova_paragem_id = request.data.get("paragem_embarque")
+
+    if not codigo:
+        return Response({"erro": "Código do bilhete é obrigatório."}, status=400)
+
+    try:
+        from core.models import Bilhete, Rota, Paragem
+        bilhete = Bilhete.objects.get(codigo=codigo, usado=False)
+        reserva = bilhete.reserva
+
+        # ✅ Bloqueia uso indevido para rotas interprovinciais
+        if reserva.rota.tipo_rota != "urbana":
+            return Response(
+                {"erro": "Este bilhete pertence a uma rota interprovincial e deve ser reutilizado pelo painel próprio."},
+                status=400
+            )
+
+
+        # 🔹 SE A RESERVA TEM MAIS DE 1 BILHETE → NÃO PERMITIR MUDAR ROTA
+        if reserva.bilhetes.count() > 1 and str(reserva.rota.id) != str(nova_rota_id):
+            return Response({
+                "erro": "Este bilhete faz parte de uma reserva com vários passageiros. Não é permitido mudar a rota. Apenas a paragem pode ser alterada."
+            }, status=400)
+
+        # 🔹 Caso a rota seja a mesma, permitimos apenas atualizar a paragem
+        if str(reserva.rota.id) == str(nova_rota_id):
+            nova_rota = reserva.rota
+        else:
+            nova_rota = Rota.objects.get(id=nova_rota_id)
+
+        # 🔹 Calcular comissão apenas para este bilhete (valor de 1 passagem)
+        valor_passagem = Decimal(nova_rota.valor_passagem or 0)
+        comissao = (ConfiguracaoSistema.objects.first().comissao_reutilizacao or Decimal("0")) if ConfiguracaoSistema.objects.exists() else Decimal("0")
+        valor_comissao = (valor_passagem * comissao).quantize(Decimal("0.01"))
+
+        # 🔹 Gerar novo código neste bilhete, sem mexer nos outros
+        bilhete.codigo = bilhete.gerar_codigo()
+        bilhete.usado = False
+        bilhete.embarcado = False
+        bilhete.data_viagem = date.today()  
+        bilhete.save()
+
+        # 🔹 Atualizar paragem e rota na reserva (rota só se permitido)
+        reserva.rota = nova_rota
+        reserva.paragem_embarque_id = nova_paragem_id
+        reserva.save()   # ✅ obrigatório
+
+
+        paragem_nome = None
+        if nova_paragem_id:
+            paragem_nome = Paragem.objects.get(id=nova_paragem_id).nome_paragem
+
+        return Response({
+            "mensagem": "Bilhete reutilizado com sucesso.",
+            "novo_codigo": bilhete.codigo,
+            "rota_nome": nova_rota.nome,
+            "nr_rota": nova_rota.nr_rota,
+            "horario": str(nova_rota.horario),
+            "paragem_embarque_nome": paragem_nome,
+            "valor_base": str(valor_passagem),
+            "comissao": str(valor_comissao),
+            "valor_total": str(valor_comissao),  # urbano = paga só comissão
+        })
+
+    except Bilhete.DoesNotExist:
+        return Response({"erro": "Bilhete inválido ou já usado."}, status=404)
+    except Rota.DoesNotExist:
+        return Response({"erro": "Nova rota não encontrada."}, status=404)
+
+@api_view(['POST'])
+def reutilizar_bilhete_interprovincial(request):
+    from core.models import Bilhete, Reserva, Rota, AgendaViagem, Paragem, ConfiguracaoSistema
+    from decimal import Decimal
+    from datetime import date
+    import random
+
+    codigo = request.data.get("codigo_bilhete")
+    nova_rota_id = request.data.get("nova_rota")
+    nova_data = request.data.get("nova_data")
+    nova_paragem_id = request.data.get("paragem_embarque")
+
+    if not codigo or not nova_rota_id or not nova_data:
+        return Response({"erro": "Código do bilhete, nova rota e nova data são obrigatórios."}, status=400)
+
+    try:
+        # ✅ Buscar bilhete real, não a reserva
+        bilhete = Bilhete.objects.select_related("reserva", "reserva__rota").get(codigo=codigo, usado=False)
+        reserva_original = bilhete.reserva
+        nova_rota = Rota.objects.get(id=nova_rota_id)
+
+        # ✅ Garantir que só interprovincial pode usar aqui
+        if reserva_original.rota.tipo_rota != "interprovincial":
+            return Response(
+                {"erro": "Este bilhete pertence a uma rota urbana. Use o painel de Reutilização Urbana."},
+                status=400
+            )
+
+        # ✅ Se tiver mais de 1 bilhete, não pode trocar rota
+        if reserva_original.bilhetes.count() > 1 and str(reserva_original.rota.id) != str(nova_rota_id):
+            return Response(
+                {"erro": "Este bilhete pertence a uma reserva com vários passageiros. Só é permitido reutilizar para a mesma rota, alterando apenas a data."},
+                status=400
+            )
+
+        # ✅ Verificar se data é futura
+        hoje = date.today()
+        if nova_data < str(hoje):
+            return Response({"erro": "Não é possível reutilizar bilhetes para datas passadas."}, status=400)
+
+        # ✅ Verificar agenda
+        agenda = AgendaViagem.objects.filter(rota=nova_rota, data=nova_data, ativo=True).first()
+        if not agenda:
+            return Response({"erro": "Data de viagem não disponível para esta rota."}, status=400)
+
+        # ✅ Verificar capacidade
+        ocupados = Reserva.objects.filter(rota=nova_rota, data_viagem=nova_data).aggregate(total=Sum('quantidade'))["total"] or 0
+        capacidade = nova_rota.veiculo.capacidade if nova_rota.veiculo else None
+        if capacidade and ocupados + reserva_original.quantidade > capacidade:
+            return Response({"erro": "Não há lugares suficientes na nova rota."}, status=400)
+
+        # ✅ Calcular comissão
+        comissao = Decimal("0.00")
+        config = ConfiguracaoSistema.objects.first()
+        if config:
+            comissao = config.comissao_reutilizacao or Decimal("0.00")
+
+        valor_original = Decimal(nova_rota.valor_passagem)
+        valor_comissao = (valor_original * comissao).quantize(Decimal("0.01"))
+        valor_total = valor_comissao
+
+        # ✅ Gerar novo código apenas para este bilhete
+        prefixo = nova_rota.nome[:4].upper().replace(" ", "")[:4]
+        novo_codigo = f"{prefixo}-{random.randint(100000, 999999)}"
+        bilhete.codigo = novo_codigo
+        bilhete.usado = False
+        bilhete.embarcado = False
+        bilhete.save()
+
+        # ✅ Atualizar reserva (rota e data)
+        reserva_original.rota = nova_rota
+        reserva_original.data_viagem = nova_data
+        if nova_paragem_id:
+            reserva_original.paragem_embarque_id = nova_paragem_id
+        reserva_original.save()
+
+        return Response({
+            "mensagem": "Bilhete reutilizado com sucesso.",
+            "novo_codigo": novo_codigo,
+            "comissao": str(valor_comissao),
+            "valor_total": str(valor_total),
+        })
+
+    except Bilhete.DoesNotExist:
+        return Response({"erro": "Bilhete inválido ou já usado."}, status=404)
+    except Rota.DoesNotExist:
+        return Response({"erro": "Nova rota não encontrada."}, status=404)
+
+
+        
+@api_view(['POST'])
+def login_motorista(request):
+    nome = request.data.get("nome")
+    senha = request.data.get("senha")
+
+    if not nome or not senha:
+        return Response({"erro": "Nome e senha são obrigatórios."}, status=400)
+
+    try:
+        motorista = Usuario.objects.get(nome=nome, senha=senha, tipo="motorista")
+
+        # Buscar rota associada ao motorista
+        rota = Rota.objects.filter(motorista=motorista, status=True).first()
+
+        return Response({
+            "id": motorista.id,
+            "nome": motorista.nome,
+            "telefone": motorista.telefone,
+            "tipo": motorista.tipo,
+            "rota_id": rota.id if rota else None,
+            "rota_nome": rota.nome if rota else None,
+            "tipo_rota": rota.tipo_rota if rota else None,
+        })
+
+    except Usuario.DoesNotExist:
+        return Response({"erro": "Usuário ou senha inválidos."}, status=400)
+
+def gen_tx_ref():
+    return "TX-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+
+@api_view(["POST"])
+def iniciar_pagamento(request):
+    """
+    Body:
+    {
+      "rota": rota_id,
+      "paragem_embarque": paragem_id,
+      "passageiros": [{"nome":"A","telefone":"2588..."}],
+      "msisdn": "2588....",
+      "valor": 100.00
+    }
+    """
+    data = request.data
+    passageiros = data.get("passageiros", [])
+    rota_id = data.get("rota")
+    paragem_id = data.get("paragem_embarque")
+    msisdn = data.get("msisdn")
+    valor = data.get("valor")
+
+    if not (rota_id and msisdn and passageiros):
+        return Response({"erro":"Dados incompletos"}, status=400)
+
+    # Verifica disponibilidade (exemplo simples)
+    try:
+        rota = Rota.objects.get(id=rota_id)
+    except Rota.DoesNotExist:
+        return Response({"erro":"Rota não encontrada"}, status=404)
+
+    # Exemplo de verificação de lugares - adaptar à tua lógica
+    with transaction.atomic():
+        # calcula ocupados (soma quantidade reservas na data)
+        ocupados = Reserva.objects.filter(rota=rota, data_viagem=rota.data_rota).aggregate(total=models.Sum('quantidade'))['total'] or 0
+        capacidade = rota.veiculo.capacidade if rota.veiculo else 0
+        qtd_pedido = len(passageiros)
+        if capacidade and (ocupados + qtd_pedido) > capacidade:
+            return Response({"erro":"Lugares insuficientes"}, status=400)
+
+        # Cria reserva provisória (quantidade = qtd_pedido) - mantém estado pendente
+        reserva = Reserva.objects.create(
+            rota=rota,
+            paragem_embarque_id=paragem_id,
+            quantidade=quantidade,
+            telefone=telefone,
+            pago=False,
+            valor_total=total
+        )
+
+
+        # cria Payment com ref único
+        tx = gen_tx_ref()
+        payment = Payment.objects.create(
+            transaction_ref=tx,
+            reserva=reserva,
+            amount=valor,
+            msisdn=msisdn,
+            status="pending",
+            meta={"passageiros": passageiros}
+        )
+
+    # Chamar SDK externo / API para disparar Push C2B
+    # aqui podes usar o portal-sdk que carregaste — exemplo abaixo:
+    try:
+        # importa aqui o SDK e faz a chamada (ex.: portalsdk.APIContext / APIRequest)
+        from portalsdk import APIContext, APIRequest, APIMethodType
+        api_context = APIContext()
+        api_context.api_key = 'INSIRA_AQUI'  # usar variável de ambiente
+        api_context.public_key = '-----PUBLIC KEY----'
+        api_context.ssl = True
+        api_context.method_type = APIMethodType.POST
+        api_context.address = 'api.sandbox.vm.co.mz'
+        api_context.port = 18352
+        api_context.path = '/ipg/v1x/c2bPayment/singleStage/'
+        api_context.add_parameter('input_TransactionReference', tx)
+        api_context.add_parameter('input_CustomerMSISDN', msisdn)
+        api_context.add_parameter('input_Amount', str(valor))
+        api_context.add_parameter('input_ThirdPartyReference', 'REF-'+tx)
+        api_context.add_parameter('input_ServiceProviderCode', '171717')
+
+        api_context.add_header('Origin','*')
+
+        api_request = APIRequest(api_context)
+        result = api_request.execute()
+
+        # Guardar resposta bruta para auditoria
+        payment.meta.update({"provider_init_response": {
+            "status_code": getattr(result,'status_code',None),
+            "body": getattr(result,'body',None)
+        }})
+        payment.save(update_fields=["meta"])
+
+    except Exception as e:
+        # Se o envio ao provedor falhar, cancela ou marca como failed
+        payment.status = "failed"
+        payment.meta = (payment.meta or {})
+        payment.meta["init_error"] = str(e)
+        payment.save()
+        # libera lugares (se necessário) ou marca reserva para remoção
+        return Response({"erro":"Erro ao iniciar pagamento"}, status=500)
+
+    # Retorna ao frontend info mínima
+    return Response({"transaction_ref": payment.transaction_ref, "status": payment.status})

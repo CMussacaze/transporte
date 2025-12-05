@@ -1,0 +1,155 @@
+/* ====== HOME YANGO STYLE ====== */
+
+.home-wrapper {
+  width: 100%;
+  height: 100vh;
+  background: #FFC90E; /* Vermelho Yango */
+  display: flex;
+  flex-direction: column;
+}
+
+/* TOP BAR */
+.home-header {
+  height: 65px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 15px;
+  color: #00A2E8;
+}
+
+.home-title {
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.home-logo {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: white;
+}
+
+/* BANNER SUPERIOR */
+.banner-top {
+  padding: 15px;
+  color: black;
+}
+
+.banner-title {
+  font-size: 34px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+/* MODAL FUNÇÕES */
+.modal-base {
+  background: white;
+  border-radius: 25px 25px 0 0;
+  padding: 1px;
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  height: 55vh;
+  box-shadow: 0 -10px 15px rgba(0,0,0,0.18);
+  overflow-y: auto;
+}
+
+/* SIDE MENU */
+.side-menu-wrapper {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.80);
+}
+
+.side-menu {
+  width: 80%;
+  max-width: 250px;
+  background: #ffffff;
+  height: 60%;
+  position: absolute;
+  right: 0;
+  top: 0;
+  padding: 20px;
+  border-radius: 20px 0 0 20px;
+}
+
+.side-menu h2 {
+  font-size: 22px;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.side-menu ul {
+  margin-top: 18px;
+  list-style: none;
+  padding: 0;
+}
+
+.side-menu li {
+  padding: 14px 0;
+  border-bottom: 2px solid #ddd;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.side-menu li:hover {
+  color: #FFC90E;
+  font-weight: bold;
+}
+
+/* BANNER */
+.banner-container {
+  position: relative;       /* fica no fluxo normal do topo */
+  width: 100%;
+  height: 140px;            /* ajusta conforme pretenderes (ex: 120-160px) */
+  overflow: hidden;
+  z-index: 10;              /* abaixo do modal */
+  background: #000;
+}
+
+.banner-media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* fallback texto quando não existe mídia */
+.banner-fallback{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:100%;
+  height:100%;
+  color:#fff;
+  background:#333;
+  font-weight:600;
+}
+
+/* MODAL INFERIOR - garante estar por cima do banner */
+.modal-base {
+  position: fixed;          /* fica fixo em baixo da viewport */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 60vh;             /* ou h-[65vh] como querias */
+  background: #ffffff;
+  border-radius: 24px 24px 0 0;
+  box-shadow: 0 -8px 20px rgba(0,0,0,0.2);
+  z-index: 30;              /* > banner (10) */
+  padding: 16px;
+  overflow-y: auto;
+}
+
+/* HEADER (mantém sempre por cima do banner se necessário) */
+.home-header {
+  position: relative;
+  z-index: 40;              /* header acima de tudo */
+}
+
+/* Pequeno ajuste responsivo: reduz altura do banner em ecrãs pequenos */
+@media (max-width: 420px) {
+  .banner-container { height: 200px; }
+  .modal-base { height: 55vh; }
+}

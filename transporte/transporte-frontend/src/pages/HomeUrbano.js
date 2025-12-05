@@ -1,0 +1,151 @@
+// src/pages/HomeUrbano.js
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import "./HomeUrbano.css";   // ✅ IMPORTANTE
+import ReservaUrbano from "../components/ReservaUrbano";
+import PassageiroInterprovincial from "../pages/PassageiroInterprovincial";
+import ReutilizarBilhete from "../pages/ReutilizarBilhete";
+import ConfigInicial from "../pages/ConfigInicial";
+
+export default function HomeUrbano() {
+  const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState("reserva");
+  const [tipoTransporteMenu, setTipoTransporteMenu] = useState(
+    localStorage.getItem("tipoTransporteGlobal") || "terrestre"
+  );
+  const [showVideo, setShowVideo] = useState(true);
+  const [showImage, setShowImage] = useState(true);
+  const usuario = JSON.parse(localStorage.getItem("configUsuario")) || {};
+  const cidadeNome = usuario.cidadeNome || "Selecionar Cidade";
+  const telefone = usuario.telefone || "";
+  const nome = usuario.nome || "Bem-vindo";
+
+  // MENU AÇÕES
+  const handleCidade = () => {
+    setMenuOpen(false);
+    setActiveSection("configuracao");
+  };
+
+  const handleModalidade = () => {
+    setMenuOpen(false);
+    setActiveSection(activeSection === "reserva" ? "interprovincial" : "reserva");
+  };
+
+  const handleTipoTransporteClick = () => {
+    const ordem = ["terrestre", "maritimo", "ferroviario"];
+    const next = ordem[(ordem.indexOf(tipoTransporteMenu) + 1) % ordem.length];
+    setTipoTransporteMenu(next);
+    localStorage.setItem("tipoTransporteGlobal", next);
+    setMenuOpen(false);
+	setActiveSection("reserva");
+  };
+
+  const handleReutilizar = () => {
+    setMenuOpen(false);
+    setActiveSection("reutilizar");
+  };
+
+  const handleMotoristaLogin = () => {
+    setMenuOpen(false);
+    navigate("/motorista/login");
+  };
+
+  const tpLabel = tipoTransporteMenu.charAt(0).toUpperCase() + tipoTransporteMenu.slice(1);
+
+  return (
+    <div className="home-wrapper">
+
+      {/* ---------- TOP BAR ---------- */}
+      <header className="home-header w-full h-16 bg-[#ff3b30] flex items-center justify-between px-4 shadow z-20 relative">
+        <div className="flex items-center gap-3">
+          <img src="/logo.png" alt="Logo" className="w-5 h-5 rounded-full bg-white shadow" />
+         
+        </div>
+
+        <button className="text-white text-3xl" onClick={() => setMenuOpen(true)}>☰</button>
+      </header>
+
+		{/* BANNER PUBLICITÁRIO — FICA NO TOPO */}
+		<div className="w-full h-40 relative overflow-hidden shadow-md z-10">
+		  {showVideo ? (
+			<video
+			  className="banner-media"
+			  autoPlay
+			  loop
+			  muted
+			  playsInline
+			  onError={() => setShowVideo(false)}
+			>
+			  <source src="/ads/banner.mp4" type="video/mp4" />
+			</video>
+		  ) : showImage ? (
+			<img
+			  className="banner-media"
+			  src="/ads/banner.jpg"
+			  alt="Publicidade"
+			  onError={() => setShowImage(false)}
+			/>
+		  ) : (
+			<div className="banner-fallback">
+			  <p>📢 Transportamos Pessoas organizadas!</p>
+			</div>
+		  )}
+		</div>
+
+      {/* ---------- MODAL INFERIOR ---------- */}
+	  <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-xl p-4 h-[60vh] z-30">
+	    {/* BOTÃO VOLTAR */}
+	    <button
+		  className="mb-3 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-4 py-2 rounded-xl self-start"
+		  onClick={() => setActiveSection("reserva")}   // ← volta sempre ao principal
+	    >
+		  ← Voltar
+	    </button>
+
+	    {/* CONTEÚDO DO MODAL */}
+	    <div className="flex-1 overflow-auto">
+		  {activeSection === "reserva" && <ReservaUrbano />}
+		  {activeSection === "interprovincial" && <PassageiroInterprovincial />}
+		  {activeSection === "reutilizar" && <ReutilizarBilhete />}
+          {activeSection === "configuracao" && (
+            // Renderiza o form de configuração no modal.
+            // Se o ConfigInicial esperar uma prop onConfigurar, passe-a para
+            // fechar o modal e actualizar o estado.
+            <ConfigInicial
+              onConfigurar={(usuarioAtualizado) => {
+                // actualiza localStorage e fecha modal
+                localStorage.setItem("configUsuario", JSON.stringify(usuarioAtualizado));
+                setActiveSection("reserva");
+              }}
+            />
+          )}		  
+	    </div>
+	  </div>
+
+
+      {/* ---------- SIDE MENU ---------- */}
+      {menuOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50">
+          <div className="side-menu absolute top-0 right-0 w-80 h-full bg-white shadow-2xl p-5 rounded-l-3xl z-50">
+
+            <button className="text-3xl mb-4" onClick={() => setMenuOpen(false)}>✕</button>
+
+            <h2>{nome}</h2>
+            <p className="text-gray-500">{telefone}</p>
+
+            <ul>
+              <li onClick={handleCidade}>{cidadeNome}</li>
+              <li onClick={handleModalidade}>
+                {activeSection === "reserva" ? "Interprovincial" : "Urbano"}
+              </li>
+              <li onClick={handleTipoTransporteClick}>{tpLabel}</li>
+              <li onClick={handleReutilizar}>Reutilizar Bilhete</li>
+              <li onClick={handleMotoristaLogin}>Motorista Login</li>
+            </ul>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

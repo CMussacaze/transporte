@@ -1,0 +1,28 @@
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from . import views, views_mpesa
+from .views import CidadeViewSet, RotaViewSet, ReservaViewSet, AgendaViagemViewSet, reservas_motorista, EncomendaViewSet, BilheteViewSet, reutilizar_bilhete_urbano, reutilizar_bilhete_interprovincial, login_motorista  # ← Inclui aqui
+
+router = DefaultRouter()
+router.register(r'cidades', CidadeViewSet)
+router.register(r'rotas', RotaViewSet)
+router.register(r'reservas', ReservaViewSet, basename='reserva')
+router.register(r'paragens', views.ParagemViewSet)
+router.register(r'agenda-viagem', AgendaViagemViewSet, basename='agenda-viagem')
+router.register(r'encomendas', EncomendaViewSet)
+router.register("bilhetes", BilheteViewSet)
+
+urlpatterns = [
+    path('', include(router.urls)),  # Rotas automáticas (ViewSets)
+    path("conferir-bilhete/", views.conferir_bilhete),
+    path("reservas-motorista/<int:motorista_id>/", views.reservas_motorista),
+    path("reutilizar-bilhete-urbano/", views.reutilizar_bilhete_urbano),
+    path("reutilizar-bilhete-interprovincial/", views.reutilizar_bilhete_interprovincial),
+    path("login-motorista/", views.login_motorista),
+
+    # 🔥 Endpoints MPESA com prefixo /api/
+    path("api/iniciar-pagamento/", views_mpesa.iniciar_pagamento),
+    path("api/mpesa-pagar/", views_mpesa.mpesa_pagar),
+    path("api/mpesa-callback/", views_mpesa.mpesa_callback),
+    path("api/mpesa-status/", views_mpesa.mpesa_status),
+]

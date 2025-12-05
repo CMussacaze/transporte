@@ -1,0 +1,65 @@
+// src/pages/LoginMotorista.js
+import React, { useState } from "react";
+import axios from "axios";
+
+const LoginMotorista = () => {
+  const [nome, setNome] = useState("");
+  const [senha, setSenha] = useState("");
+  const [mensagem, setMensagem] = useState("");
+
+  const handleLogin = async () => {
+    if (!nome || !senha) {
+      setMensagem("⚠️ Preencha todos os campos.");
+      return;
+    }
+
+    try {
+      const res = await axios.post("http://127.0.0.1:8000/api/login-motorista/", { nome, senha });
+      const motorista = res.data;
+		localStorage.setItem("motoristaLogado", JSON.stringify({
+			id: motorista.id,
+			nome: motorista.nome,
+			telefone: motorista.telefone,
+			data_rota: new Date().toISOString().split("T")[0] // ✅ Data de hoje
+		}));
+
+
+      // Checa as rotas do motorista para decidir painel
+      const rotasRes = await axios.get("http://127.0.0.1:8000/api/rotas/", {
+        params: { motorista: motorista.id }
+      });
+
+      const rotas = rotasRes.data || [];
+      const temInterprovincial = rotas.some(r => r.tipo_rota === "interprovincial");
+
+      window.location.href = temInterprovincial ? "/motorista/interprovincial" : "/motorista/urbano";
+    } catch (err) {
+      const msg = err.response?.data?.erro || "❌ Falha ao efetuar login.";
+      setMensagem(msg);
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: 400, margin: "100px auto", textAlign: "center" }}>
+      <h2>🚍 Login do Motorista</h2>
+      <input
+        type="text"
+        placeholder="Nome"
+        value={nome}
+        onChange={(e) => setNome(e.target.value)}
+        style={{ width: "100%", marginBottom: 10, padding: 8 }}
+      />
+      <input
+        type="password"
+        placeholder="Senha"
+        value={senha}
+        onChange={(e) => setSenha(e.target.value)}
+        style={{ width: "100%", marginBottom: 10, padding: 8 }}
+      />
+      <button onClick={handleLogin} style={{ padding: "10px 20px" }}>Entrar</button>
+      {mensagem && <p>{mensagem}</p>}
+    </div>
+  );
+};
+
+export default LoginMotorista;

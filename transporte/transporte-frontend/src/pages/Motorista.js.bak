@@ -1,0 +1,77 @@
+import React, { useEffect, useState } from "react";
+import axios from "axios";
+
+const Motorista = () => {
+    const [reservas, setReservas] = useState([]);
+
+    useEffect(() => {
+        axios.get("http://127.0.0.1:8000/api/reservas/")
+            .then(res => setReservas(res.data))
+            .catch(err => console.error("Erro ao buscar reservas:", err));
+    }, []);
+
+    const handleSalvarBagagem = (reservaId, bagagemKg, refBagagem) => {
+        axios.patch(`http://127.0.0.1:8000/api/reservas/${reservaId}/`, {
+            bagagem_kg: bagagemKg,
+            ref_bagagem: refBagagem
+        })
+        .then(() => alert("Dados da bagagem salvos com sucesso!"))
+        .catch(() => alert("Erro ao salvar dados da bagagem."));
+    };
+
+    return (
+        <div>
+            <h2>Painel do Motorista</h2>
+            <table border="1" cellPadding={5}>
+                <thead>
+                    <tr>
+                        <th>Bilhete</th>
+                        <th>Rota</th>
+                        <th>Paragem</th>
+                        <th>Qtd</th>
+                        <th>Bagagem (KG)</th>
+                        <th>Referência</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {reservas.map(reserva => {
+                        return (
+                            <tr key={reserva.id}>
+                                <td>{reserva.codigo_bilhete}</td>
+                                <td>{reserva.rota_nome}</td>
+                                <td>{reserva.paragem_embarque_nome || "—"}</td>
+                                <td>{reserva.quantidade}</td>
+                                <td>
+                                    <input
+                                        type="number"
+                                        defaultValue={reserva.bagagem_kg || ""}
+                                        onChange={e => reserva.bagagem_kg = e.target.value}
+                                    />
+                                </td>
+                                <td>
+                                    <input
+                                        type="text"
+                                        defaultValue={reserva.ref_bagagem || ""}
+                                        onChange={e => reserva.ref_bagagem = e.target.value}
+                                    />
+                                </td>
+                                <td>
+                                    <button onClick={() => handleSalvarBagagem(
+                                        reserva.id,
+                                        reserva.bagagem_kg,
+                                        reserva.ref_bagagem
+                                    )}>
+                                        Salvar
+                                    </button>
+                                </td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
+export default Motorista;

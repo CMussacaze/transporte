@@ -1,0 +1,41 @@
+import React, { useState, useEffect } from "react";
+import ReutilizarUrbano from "../components/ReutilizarUrbano";
+import ReutilizarInterprovincial from "../components/ReutilizarInterprovincial";
+
+const ReutilizarBilhete = () => {
+    const [tipo, setTipo] = useState("urbano");
+
+    useEffect(() => {
+        const config = JSON.parse(localStorage.getItem("configUsuario"));
+        if (config?.tipoTransporte === "interprovincial") {
+            setTipo("interprovincial");
+        } else {
+            setTipo("urbano"); // padrão
+        }
+    }, []);
+
+    return (
+        <div>
+            <h2>Reutilizar Bilhete</h2>
+            <button
+                onClick={() => setTipo("urbano")}
+                disabled={tipo === "urbano"}
+            >
+                Urbano
+            </button>
+            <button
+                onClick={() => setTipo("interprovincial")}
+                disabled={tipo === "interprovincial"}
+            >
+                Interprovincial
+            </button>
+
+            <hr />
+
+            {tipo === "urbano" && <ReutilizarUrbano />}
+            {tipo === "interprovincial" && <ReutilizarInterprovincial />}
+        </div>
+    );
+};
+
+export default ReutilizarBilhete;
