@@ -1,0 +1,31 @@
+import React, { useEffect, useState } from 'react';
+import api from '../api';
+
+const Proprietarios = () => {
+    const [proprietarios, setProprietarios] = useState([]);
+
+	useEffect(() => {
+		api.get('/proprietarios/')
+			.then(response => {
+				console.log("Dados recebidos:", response.data);  // <-- Log dos dados recebidos
+				setProprietarios(response.data);
+			})
+			.catch(error => {
+				console.error("Erro ao buscar proprietários:", error);
+			});
+	}, []);
+
+
+    return (
+        <div>
+            <h2>Lista de Proprietários</h2>
+            <ul>
+                {proprietarios.map((prop) => (
+                    <li key={prop.id}>{prop.nome} - {prop.telefone}</li>
+                ))}
+            </ul>
+        </div>
+    );
+};
+
+export default Proprietarios;

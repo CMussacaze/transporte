@@ -1,0 +1,217 @@
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+
+const ReutilizarUrbano = () => {
+    const [codigo, setCodigo] = useState("");
+    const [reserva, setReserva] = useState(null);
+    const [rotas, setRotas] = useState([]);
+    const [paragens, setParagens] = useState([]);
+    const [novaRotaId, setNovaRotaId] = useState("");
+    const [novaParagemId, setNovaParagemId] = useState("");
+    const [novoBilhete, setNovoBilhete] = useState(null);
+
+    // Dados do usuário (cidade)
+    const configUsuario = JSON.parse(localStorage.getItem("configUsuario"));
+    const cidadeSelecionada = configUsuario?.cidadeSelecionada || "";
+    const tipoTransporte = "terrestre";
+
+    // 🔹 Buscar reserva pelo código
+	const buscarReserva = () => {
+		if (!codigo.trim()) return alert("Insira o código do bilhete.");
+
+		axios
+			.get(`http://127.0.0.1:8000/api/reservas/?search=${codigo}`)
+			.then((res) => {
+				// Procurar dentro da lista o bilhete individual correto
+				const reservaEncontrada = res.data.find(r =>
+					(r.bilhetes || []).some(b => b.codigo === codigo && !b.usado)
+				);
+
+				if (!reservaEncontrada) {
+					alert("Bilhete não encontrado ou já utilizado.");
+					setReserva(null);
+				} else {
+					setReserva(reservaEncontrada);
+					setNovoBilhete(null);
+				}
+			})
+			.catch(() => alert("Erro ao buscar bilhete."));
+	};
+
+
+    // 🔹 Carregar rotas filtradas pela cidade
+    useEffect(() => {
+        if (cidadeSelecionada && tipoTransporte) {
+            axios
+                .get(
+                    `http://127.0.0.1:8000/api/rotas/?cidade=${cidadeSelecionada}&tipo_transporte=${tipoTransporte}`
+                )
+                .then((response) => {
+                    const rotasUrbanasAtivas = response.data.filter(
+                        (r) => r.status && r.tipo_rota === "urbana"
+                    );
+                    setRotas(rotasUrbanasAtivas);
+                })
+                .catch((error) => console.error("Erro ao carregar rotas:", error));
+        }
+    }, [cidadeSelecionada, tipoTransporte]);
+
+    // 🔹 Carregar paragens ao selecionar nova rota
+    useEffect(() => {
+        if (novaRotaId) {
+            axios
+                .get(`http://127.0.0.1:8000/api/paragens/?rota=${novaRotaId}`)
+                .then((res) => {
+                    setParagens(res.data);
+                    if (res.data.length > 0) setNovaParagemId(res.data[0].id);
+                })
+                .catch(() => console.error("Erro ao buscar paragens"));
+        } else {
+            setParagens([]);
+            setNovaParagemId("");
+        }
+    }, [novaRotaId]);
+
+    // 🔹 Reutilizar bilhete
+    const reutilizar = () => {
+        if (!reserva || !novaRotaId || !novaParagemId) {
+            return alert("Por favor, escolha a nova rota e paragem.");
+        }
+
+        const dados = {
+            codigo_bilhete: codigo,
+            nova_rota: novaRotaId,
+            paragem_embarque: novaParagemId,
+        };
+
+        axios
+            .post("http://127.0.0.1:8000/api/reutilizar-bilhete-urbano/", dados)
+            .then((res) => {
+                const {
+                    novo_codigo,
+                    rota_nome,
+                    horario,
+                    nr_rota,
+                    paragem_embarque_nome,
+                    quantidade,
+                    valor_base,
+                    comissao,
+                    valor_total,
+                } = res.data;
+
+                alert(
+                    `✅ Bilhete reutilizado com sucesso!\nNovo Código: ${novo_codigo}\nComissão: ${valor_total} MZN`
+                );
+
+                setNovoBilhete({
+                    novo_codigo,
+                    rota_nome,
+                    horario,
+                    nr_rota,
+                    paragem_embarque_nome,
+                    quantidade,
+                    valor_base,
+                    comissao,
+                    valor_total,
+                });
+            })
+            .catch((err) => {
+                console.error("Erro completo:", err.response?.data || err);
+                if (err.response?.data?.erro) {
+                    alert("Erro: " + err.response.data.erro);
+                } else {
+                    alert("Erro ao reutilizar bilhete.");
+                }
+            });
+    };
+
+    return (
+        <div>
+            <h3>♻️ Reutilizar Bilhete (Urbano)</h3>
+
+            <input
+                type="text"
+                placeholder="Digite o código do bilhete"
+                value={codigo}
+                onChange={(e) => setCodigo(e.target.value)}
+            />
+            <button onClick={buscarReserva}>Buscar</button>
+
+            {reserva && (
+                <div style={{ marginTop: "15px" }}>
+                    <p><strong>Bilhete:</strong> {reserva.codigo_bilhete}</p>
+                    <p><strong>Rota anterior:</strong> {reserva.rota_nome}</p>
+                    <p><strong>Paragem anterior:</strong> {reserva.paragem_embarque_nome || "Não definida"}</p>
+                    <hr />
+
+                    <label>Nova Rota:</label>
+                    <select value={novaRotaId} onChange={(e) => setNovaRotaId(e.target.value)}>
+                        <option value="">-- Escolha uma nova rota --</option>
+                        {rotas.map((r) => (
+                            <option key={r.id} value={r.id}>
+                                {r.nome} - {r.horario}
+                            </option>
+                        ))}
+                    </select>
+
+                    {paragens.length > 0 && (
+                        <>
+                            <br />
+                            <label>Paragem de Embarque:</label>
+                            <select
+                                value={novaParagemId}
+                                onChange={(e) => setNovaParagemId(e.target.value)}
+                            >
+                                <option value="">-- Escolha uma paragem --</option>
+                                {paragens.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                        {p.nome_paragem}
+                                    </option>
+                                ))}
+                            </select>
+                        </>
+                    )}
+
+                    <br />
+                    <button style={{ marginTop: "10px" }} onClick={reutilizar}>
+                        Confirmar Reutilização
+                    </button>
+                </div>
+            )}
+
+            {novoBilhete && (
+                <div
+                    className="bilhete"
+                    style={{
+                        marginTop: "25px",
+                        border: "1px solid #ccc",
+                        padding: "15px",
+                        borderRadius: "8px",
+                        background: "#f9f9f9",
+                    }}
+                >
+                    <h3>🎫 Novo Bilhete</h3>
+                    <p><strong>Nº do Bilhete:</strong> {novoBilhete.novo_codigo}</p>
+                    <p><strong>Rota:</strong> {novoBilhete.rota_nome} | <strong>Horário:</strong> {novoBilhete.horario}</p>
+                    <p><strong>Nº da Rota:</strong> {novoBilhete.nr_rota}</p>
+					<p><strong>---------------------------------------------</strong></p>
+                    <p><strong>Qtd:</strong> {novoBilhete.quantidade}</p>
+                    <p><strong>Preço:</strong> {parseFloat(novoBilhete.valor_base || 0).toFixed(2)} MZN | <strong>Comissão:</strong> {parseFloat(novoBilhete.comissao || 0).toFixed(2)} MZN</p>
+                    <p><strong>Total Pago:</strong> {parseFloat(novoBilhete.valor_total || 0).toFixed(2)} MZN</p>
+					<p><strong>Paragem Embarque:</strong> {novoBilhete.paragem_embarque_nome}</p>
+
+                    <button
+                        onClick={() =>
+                            alert("Em breve será possível baixar o bilhete em PDF.")
+                        }
+                        style={{ marginTop: "10px" }}
+                    >
+                        ⬇️ Baixar Bilhete
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default ReutilizarUrbano;

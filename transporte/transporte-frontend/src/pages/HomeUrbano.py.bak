@@ -1,0 +1,247 @@
+// src/pages/HomeUrbano.js
+import React, { useEffect, useState } from "react";
+
+// 👉 Ajusta estes paths conforme a tua estrutura
+import ReservaUrbano from "./ReservaUrbano";
+import ReutilizarUrbano from "./ReutilizarUrbano";
+import ReutilizarInterprovincial from "./ReutilizarInterprovincial";
+
+const HomeUrbano = () => {
+  const [activeTab, setActiveTab] = useState("transporte"); // 'cidade' | 'transporte' | 'reutilizar'
+  const [sheetMinimized, setSheetMinimized] = useState(false);
+  const [currentBanner, setCurrentBanner] = useState(0);
+
+  const configUsuario = JSON.parse(localStorage.getItem("configUsuario") || "{}");
+
+  // 🎨 Banners (imagem + vídeo)
+  const banners = [
+    {
+      type: "image",
+      src: "/banners/urbano1.jpg",
+      title: "Viaje com conforto",
+      subtitle: "Compre o seu bilhete sem sair de casa.",
+    },
+    {
+      type: "video",
+      src: "/banners/urbano_spot.mp4",
+      poster: "/banners/urbano_spot_poster.jpg",
+      title: "Pague com M-Pesa",
+      subtitle: "Rápido, seguro e sem filas.",
+    },
+    {
+      type: "image",
+      src: "/banners/urbano2.jpg",
+      title: "Promoções de fim-de-semana",
+      subtitle: "Fique atento às novidades.",
+    },
+  ];
+
+  // Troca automática de banner
+  useEffect(() => {
+    const id = setInterval(() => {
+      setCurrentBanner((prev) => (prev + 1) % banners.length);
+    }, 8000);
+    return () => clearInterval(id);
+  }, [banners.length]);
+
+  const handleMotoristaLogin = () => {
+    // Mantém o teu fluxo actual
+    window.location.href = "/motorista/login";
+  };
+
+  const getSheetTitle = () => {
+    switch (activeTab) {
+      case "cidade":
+        return "Selecionar Cidade";
+      case "transporte":
+        return "Compra de Bilhete";
+      case "reutilizar":
+        return "Reutilizar Bilhete";
+      default:
+        return "";
+    }
+  };
+
+  return (
+    <div className="app-urbano-root">
+      {/* TOPO: logo + banner + menu */}
+      <header className="app-urbano-header">
+        {/* Logo à esquerda */}
+        <div className="header-logo">
+          <div className="logo-mark">
+            🚌
+          </div>
+          <div className="logo-text">
+            <div className="logo-main">TxPass</div>
+            <div className="logo-sub">Bilhetes Urbanos</div>
+          </div>
+        </div>
+
+        {/* Banner central (imagem / vídeo rotativo) */}
+        <div className="header-banner">
+          {banners[currentBanner].type === "image" ? (
+            <div className="banner-media-wrapper">
+              <img
+                src={banners[currentBanner].src}
+                alt={banners[currentBanner].title}
+                className="banner-media"
+              />
+            </div>
+          ) : (
+            <div className="banner-media-wrapper">
+              <video
+                className="banner-media"
+                src={banners[currentBanner].src}
+                poster={banners[currentBanner].poster}
+                autoPlay
+                muted
+                loop
+              />
+            </div>
+          )}
+          <div className="banner-caption">
+            <h3>{banners[currentBanner].title}</h3>
+            <p>{banners[currentBanner].subtitle}</p>
+          </div>
+          <div className="banner-dots">
+            {banners.map((_, i) => (
+              <button
+                key={i}
+                className={`dot ${i === currentBanner ? "active" : ""}`}
+                onClick={() => setCurrentBanner(i)}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Menu à direita (tiras) */}
+        <nav className="header-menu">
+          <button
+            className={`menu-btn ${activeTab === "cidade" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("cidade");
+              setSheetMinimized(false);
+            }}
+          >
+            Cidade
+          </button>
+
+          <button
+            className={`menu-btn ${activeTab === "transporte" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("transporte");
+              setSheetMinimized(false);
+            }}
+          >
+            Transporte
+          </button>
+
+          <button
+            className={`menu-btn ${activeTab === "reutilizar" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("reutilizar");
+              setSheetMinimized(false);
+            }}
+          >
+            Reutilizar
+          </button>
+
+          <button
+            className="menu-btn motorista-btn"
+            onClick={handleMotoristaLogin}
+          >
+            Motorista<br />Login
+          </button>
+        </nav>
+      </header>
+
+      {/* CONTEÚDO DE FUNDO (pode ter imagem de mapa, etc.) */}
+      <main className="app-urbano-main">
+        <div className="background-illustration">
+          {/* Coloca aqui um mapa estilizado, foto da cidade, etc. */}
+          <span>Escolha a rota e compre o seu bilhete com segurança.</span>
+        </div>
+      </main>
+
+      {/* BOTTOM SHEET / MODAL INFERIOR */}
+      <div
+        className={
+          "bottom-sheet " + (sheetMinimized ? "bottom-sheet--minimized" : "")
+        }
+      >
+        <div className="bottom-sheet-header">
+          <button
+            className="sheet-toggle-btn"
+            onClick={() => setSheetMinimized((prev) => !prev)}
+          >
+            {sheetMinimized ? "↑ Expandir" : "↓ Minimizar"}
+          </button>
+          <span className="sheet-title">{getSheetTitle()}</span>
+          {activeTab === "cidade" && configUsuario?.cidadeNome && (
+            <span className="sheet-city-pill">
+              Cidade actual: {configUsuario.cidadeNome}
+            </span>
+          )}
+        </div>
+
+        {!sheetMinimized && (
+          <div className="bottom-sheet-content">
+            {activeTab === "cidade" && (
+              <div className="sheet-section">
+                <h3>Selecionar / alterar cidade</h3>
+                {configUsuario?.cidadeNome ? (
+                  <>
+                    <p>
+                      Cidade actual: <strong>{configUsuario.cidadeNome}</strong>
+                    </p>
+                    <button
+                      className="primary-btn"
+                      onClick={() => {
+                        localStorage.removeItem("configUsuario");
+                        window.location.href = "/configuracao";
+                      }}
+                    >
+                      Alterar cidade
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p>Nenhuma cidade definida.</p>
+                    <button
+                      className="primary-btn"
+                      onClick={() => (window.location.href = "/configuracao")}
+                    >
+                      Definir cidade
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {activeTab === "transporte" && (
+              <div className="sheet-section">
+                {/* Usa o teu componente actual de compra urbano */}
+                <ReservaUrbano />
+              </div>
+            )}
+
+            {activeTab === "reutilizar" && (
+              <div className="sheet-section sheet-reutilizar-grid">
+                <div className="sheet-col">
+                  <h4>Urbano</h4>
+                  <ReutilizarUrbano />
+                </div>
+                <div className="sheet-col">
+                  <h4>Interprovincial</h4>
+                  <ReutilizarInterprovincial />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default HomeUrbano;

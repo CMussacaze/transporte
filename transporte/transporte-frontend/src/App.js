@@ -1,0 +1,47 @@
+import React, { useState } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+
+import ConfigInicial from "./pages/ConfigInicial";
+import ReservaUrbano from "./components/ReservaUrbano";
+import PassageiroInterprovincial from "./pages/PassageiroInterprovincial";
+import VerificarBilhete from "./pages/VerificarBilhete";
+import MotoristaUrbano from "./pages/MotoristaUrbano";
+import MotoristaInterprovincial from "./pages/MotoristaInterprovincial";
+import ReutilizarBilhete from "./pages/ReutilizarBilhete";
+import ReutilizarUrbano from "./pages/ReutilizarUrbano";
+import ReutilizarInterprovincial from "./pages/ReutilizarInterprovincial";
+import AlterarRotaUrbano from "./pages/AlterarRotaUrbano";
+import AlterarRotaInterprovincial from "./pages/AlterarRotaInterprovincial";
+import MotoristaLogin from "./pages/MotoristaLogin";
+import HomeUrbano from "./pages/HomeUrbano";
+
+const App = () => {
+    const [usuario, setUsuario] = useState(null);
+
+    return (
+        <Router>
+
+
+            <Routes>
+				<Route path="/" element={<HomeUrbano />} />
+                <Route path="/configuracao" element={<ConfigInicial onConfigurar={setUsuario} />} />
+                <Route path="/reserva" element={<ReservaUrbano usuario={usuario} />} />
+                <Route path="/interprovincial" element={<PassageiroInterprovincial />} />
+                <Route path="/verificar" element={<VerificarBilhete />} />
+                <Route path="/motorista/urbano" element={<MotoristaUrbano />} />
+				<Route path="/motorista/interprovincial" element={<MotoristaInterprovincial />} />
+				<Route path="/reutilizar" element={<ReutilizarBilhete />} />
+				<Route path="/reutilizar-urbano" element={<ReutilizarUrbano />} />
+				<Route path="/reutilizar-interprovincial" element={<ReutilizarInterprovincial />} />
+				<Route path="/alterar-rota-urbano" element={<AlterarRotaUrbano />} />
+				<Route path="/alterar-rota-interprovincial" element={<AlterarRotaInterprovincial />} />		
+				<Route path="/motorista/login" element={<MotoristaLogin onLogin />} />	
+				{/* fallback */}
+				<Route path="*" element={<Navigate to="/" replace />} />
+
+            </Routes>
+        </Router>
+    );
+};
+
+export default App;
